@@ -1,0 +1,11 @@
+[project]
+name = "fluffys"
+version = "0.0.1"
+dependencies = [
+  "boto3",
+  "fastmcp",
+]
+requires-python = ">= 3.9"
+
+[project.scripts]
+fluffys = "fluffys.main:main"
