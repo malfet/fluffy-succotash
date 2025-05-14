@@ -2,12 +2,8 @@ import os
 from mcp.server.fastmcp import FastMCP, Context
 import boto3
 import datetime
-<<<<<<< HEAD
-from typing import Optional, Dict, Any, List
-=======
 from typing import List, Optional, Dict, Any
 import requests
->>>>>>> origin/main
 
 
 mcp = FastMCP("PyTorch infra")
