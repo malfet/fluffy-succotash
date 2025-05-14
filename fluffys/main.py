@@ -1,11 +1,19 @@
 from mcp.server.fastmcp import FastMCP, Context
 import boto3
 import datetime
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 
 mcp = FastMCP("PyTorch infra")
 cloudtrail = boto3.client("cloudtrail")
+cloudwatch = boto3.client("logs")
+
+
+DEFAULT_LOG_GROUPS = [
+    "/aws/lambda/gh-ci-scale-up",
+    "/aws/lambda/gh-ci-scale-down",
+    "/aws/lambda/gh-ci-scale-up-chron",
+]
 
 
 @mcp.tool()
@@ -76,7 +84,6 @@ def get_cloudtrail_events(
                     else None,
                     "username": event.get("Username"),
                     "resources": event.get("Resources"),
-                    "cloud_trail_event": event.get("CloudTrailEvent"),
                 }
             )
 
@@ -87,6 +94,84 @@ def get_cloudtrail_events(
         }
     except Exception as e:
         return {"error": str(e), "status": "failed"}
+
+
+@mcp.tool()
+def query_cloudwatch_logs(
+    search_pattern: str,
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
+    log_groups: Optional[List[str]] = DEFAULT_LOG_GROUPS,
+    ctx: Optional[Context] = None,
+) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    Query CloudWatch logs for a specific pattern within a time period.
+
+    Args:
+        search_pattern: Pattern to search for in the logs
+        start_time: The start time as a datetime object
+        end_time: The end time as a datetime object
+        log_groups: List of log groups to query (if None, will query all available log groups)
+
+    Returns:
+        Dictionary mapping log group names to their events
+    """
+    results = {}
+
+    # Convert ISO strings to milliseconds since epoch for CloudWatch
+    if start_time:
+        start_time_ms = int(
+            datetime.datetime.fromisoformat(
+                start_time.replace("Z", "+00:00")
+            ).timestamp()
+            * 1000
+        )
+    if end_time:
+        end_time_ms = int(
+            datetime.datetime.fromisoformat(end_time.replace("Z", "+00:00")).timestamp()
+            * 1000
+        )
+
+    # Query each log group
+    for log_group in log_groups:
+        try:
+            # Check if log group exists
+            try:
+                cloudwatch.describe_log_groups(logGroupNamePrefix=log_group)
+            except cloudwatch.exceptions.ResourceNotFoundException:
+                print(f"Log group {log_group} does not exist, skipping...")
+                continue
+
+            # Get log streams for this group
+            response = cloudwatch.filter_log_events(
+                logGroupName=log_group,
+                startTime=start_time_ms,
+                endTime=end_time_ms,
+                filterPattern=search_pattern,
+                limit=10000,  # Adjust limit as needed
+            )
+
+            events = response.get("events", [])
+
+            # Handle pagination if there are more results
+            while "nextToken" in response:
+                response = cloudwatch.filter_log_events(
+                    logGroupName=log_group,
+                    startTime=start_time_ms,
+                    endTime=end_time_ms,
+                    filterPattern=search_pattern,
+                    nextToken=response["nextToken"],
+                    limit=10000,
+                )
+                events.extend(response.get("events", []))
+
+            if events:
+                results[log_group] = events
+
+        except Exception as e:
+            print(f"Error querying {log_group}: {str(e)}")
+
+    return results
 
 
 def main():
