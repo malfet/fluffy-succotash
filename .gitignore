@@ -1,2 +1,4 @@
 .DS_Store
 fluffys.egg-info/
+__pycache__
+_fluffys/_pycache__

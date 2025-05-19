@@ -99,11 +99,81 @@ def get_cloudtrail_events(
 
 
 @mcp.tool()
-def query_cloudwatch_logs(
+def list_log_streams(
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
+    log_groups: Optional[List[str]] = DEFAULT_LOG_GROUPS,
+    ctx: Optional[Context] = None,
+) -> Dict[str, List[Dict]]:
+    """
+    List all log streams from a list of log groups within a specified time period.
+
+    Args:
+        start_time: Start time for filtering log streams (default: 24 hours ago)
+        end_time: End time for filtering log streams (default: now)
+        log_groups: List of CloudWatch log group names
+
+    Returns:
+        Dictionary mapping log group names to their log streams
+    """
+    result = {}
+
+    # Convert ISO strings to milliseconds since epoch for CloudWatch
+    if start_time:
+        start_time_ms = int(
+            datetime.datetime.fromisoformat(
+                start_time.replace("Z", "+00:00")
+            ).timestamp()
+            * 1000
+        )
+    if end_time:
+        end_time_ms = int(
+            datetime.datetime.fromisoformat(end_time.replace("Z", "+00:00")).timestamp()
+            * 1000
+        )
+
+    for log_group in log_groups:
+        streams = []
+        paginator = cloudwatch.get_paginator("describe_log_streams")
+
+        try:
+            found = False
+            # Use orderBy='LastEventTime' to get streams with events in our time range
+            for page in paginator.paginate(
+                logGroupName=log_group, orderBy="LastEventTime", descending=True
+            ):
+                for stream in page["logStreams"]:
+                    # Filter streams that have events within our time range
+                    if (
+                        "lastEventTimestamp" in stream
+                        and start_time_ms <= stream["lastEventTimestamp"] <= end_time_ms
+                    ):
+                        found = True
+                        streams.append(stream)
+                    elif (
+                        "lastEventTimestamp" in stream
+                        and stream["lastEventTimestamp"] < start_time_ms
+                    ):
+                        break
+
+                if found:
+                    break
+
+            result[log_group] = streams
+        except cloudwatch.exceptions.ResourceNotFoundException:
+            result[log_group] = []
+            print(f"Log group {log_group} not found")
+
+    return result
+
+
+@mcp.tool()
+def query_log_streams(
     search_pattern: str,
     start_time: Optional[str] = None,
     end_time: Optional[str] = None,
     log_groups: Optional[List[str]] = DEFAULT_LOG_GROUPS,
+    log_stream_names: Optional[List[str]] = [],
     ctx: Optional[Context] = None,
 ) -> Dict[str, List[Dict[str, Any]]]:
     """
@@ -149,7 +219,7 @@ def query_cloudwatch_logs(
                 logGroupName=log_group,
                 startTime=start_time_ms,
                 endTime=end_time_ms,
-                filterPattern=search_pattern,
+                filterPattern=f"%{search_pattern}%",
                 limit=10000,  # Adjust limit as needed
             )
 
@@ -159,16 +229,17 @@ def query_cloudwatch_logs(
             while "nextToken" in response:
                 response = cloudwatch.filter_log_events(
                     logGroupName=log_group,
+                    logStreamNames=log_stream_names,
                     startTime=start_time_ms,
                     endTime=end_time_ms,
-                    filterPattern=search_pattern,
+                    filterPattern=f"%{search_pattern}%",
                     nextToken=response["nextToken"],
                     limit=10000,
                 )
                 events.extend(response.get("events", []))
 
             if events:
-                results[log_group] = events
+                results[log_group] = [e.get("message", "") for e in events]
 
         except Exception as e:
             print(f"Error querying {log_group}: {str(e)}")
