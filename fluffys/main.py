@@ -1,4 +1,7 @@
+from functools import lru_cache
+import json
 import os
+import re
 from mcp.server.fastmcp import FastMCP, Context
 import boto3
 import datetime
@@ -319,8 +322,8 @@ def list_ec2_instances_types(search_string: Optional[str] = None) -> List[str]:
     return all_instance_types
 
 
-@mcp.tool()
-def list_runners_connected_to_github() -> List:
+@lru_cache
+def _get_all_gh_runners() -> List:
     """
     List runners that are registered to GitHub at the organization level
 
@@ -381,19 +384,37 @@ def list_runners_connected_to_github() -> List:
                 # Get the next page URL if it exists
                 current_url = links.get("next")
 
-        if not all_instances:
-            return ["No EC2 instances found connected to GitHub."]
-
-        # Size of output is too large so this edits out the fields names
-        return [
-            f"{instance['id']} {instance['name']} ({instance['status']}) {'busy' if instance['busy'] else ''} {' '.join([l['name'] for l in instance['labels']])}"
-            for instance in all_instances
-        ]
+        return all_instances
 
     except requests.exceptions.RequestException as e:
         return [f"Error connecting to GitHub API: {str(e)}"]
     except Exception as e:
         return [f"Unexpected error: {str(e)}"]
+
+
+@mcp.tool()
+def list_runners_connected_to_github(search_str: str) -> List:
+    """
+    List runners that are registered to GitHub at the organization level
+
+    Args:
+        search_str: Optional string to filter by
+
+    Returns:
+        List of runners connected to GitHub
+    """
+    all_instances = _get_all_gh_runners()
+
+    if not all_instances:
+        return ["No EC2 instances found connected to GitHub."]
+
+    # Size of output is too large so this edits out the fields names
+    return [
+        f"{instance['id']} {instance['name']} ({instance['status']}) {'busy' if instance['busy'] else ''} {' '.join([l['name'] for l in instance['labels']])}"
+        for instance in all_instances
+        # crude filtering
+        if re.search(search_str, json.dumps(instance), re.IGNORECASE)
+    ]
 
 
 def main():
