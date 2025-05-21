@@ -248,12 +248,13 @@ def query_log_streams(
 
 
 @mcp.tool()
-def num_instances(instance_type: Optional[str] = None) -> int:
+def num_ec2_instances(instance_type: Optional[str] = None) -> int:
     """
     List EC2 instances with optional filtering by instance type
 
     Args:
-        instance_type: Optional EC2 instance type to filter by (e.g., 't2.micro')
+        instance_type: Optional EC2 instance type to filter by (e.g.,
+        't2.micro').  This must be exact.
 
     Returns:
         Number of active instances matching the filter
@@ -279,7 +280,7 @@ def num_instances(instance_type: Optional[str] = None) -> int:
 
 
 @mcp.tool()
-def list_instances_types(search_string: Optional[str] = None) -> List[str]:
+def list_ec2_instances_types(search_string: Optional[str] = None) -> List[str]:
     """
     List EC2 instance types with optional filtering by search string
 
@@ -319,12 +320,12 @@ def list_instances_types(search_string: Optional[str] = None) -> List[str]:
 
 
 @mcp.tool()
-def list_instances_connected_to_github() -> List:
+def list_runners_connected_to_github() -> List:
     """
-    List EC2 instances that are registered to GitHub at the organization level
+    List runners that are registered to GitHub at the organization level
 
     Returns:
-        List of instance IDs or error messages
+        List of runners connected to GitHub
     """
     github_token = os.getenv("GITHUB_TOKEN_ADMIN_READ")
     if not github_token:
@@ -357,13 +358,7 @@ def list_instances_connected_to_github() -> List:
 
             data = response.json()
 
-            # Extract instance information from this page
-            for runner in data.get("runners", []):
-                # Look for EC2 instance identifiers
-                # This may be in labels, name, or other fields depending on how the runner was registered
-                # Add any identifiable information about the instance
-                instance_info = f"{runner.get('id')} - {runner.get('name')} ({runner.get('status')})"
-                all_instances.append(instance_info)
+            all_instances.extend(data.get("runners", []))
 
             # Check for Link header to handle pagination
             link_header = response.headers.get("Link")
@@ -389,7 +384,11 @@ def list_instances_connected_to_github() -> List:
         if not all_instances:
             return ["No EC2 instances found connected to GitHub."]
 
-        return all_instances
+        # Size of output is too large so this edits out the fields names
+        return [
+            f"{instance['id']} {instance['name']} ({instance['status']}) {'busy' if instance['busy'] else ''} {' '.join([l['name'] for l in instance['labels']])}"
+            for instance in all_instances
+        ]
 
     except requests.exceptions.RequestException as e:
         return [f"Error connecting to GitHub API: {str(e)}"]
